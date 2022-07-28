@@ -1,0 +1,44 @@
+[
+  {
+    "type": "digital",
+    "port": 1,
+    "datetime": "2022-05-29 15:50:07.413",
+    "data": 0
+  },
+  {
+    "type": "digital",
+    "port": 1,
+    "datetime": "2022-05-29 15:51:07.413",
+    "data": 0
+  },
+  {
+    "type": "analog",
+    "port": 3,
+    "datetime": "2022-05-29 15:51:10",
+    "data": 13.34
+  },
+  {
+    "type": "analog",
+    "port": 3,
+    "datetime": "2022-05-29 15:51:20",
+    "data": 9.14
+  },
+  {
+    "type": "analog",
+    "port": 3,
+    "datetime": "2022-05-29 15:51:30",
+    "data": 10.8
+  },
+  {
+    "type": "analog",
+    "port": 3,
+    "datetime": "2022-05-29 15:51:40",
+    "data": 17.34
+  },
+  {
+    "type": "digital",
+    "port": 1,
+    "datetime": "2022-05-29 15:51:47.343",
+    "data": 0
+  }
+]
