@@ -288,7 +288,12 @@ func checkActivation(db *gorm.DB) bool {
 }
 
 func runDevice(device database.Device, db *gorm.DB) {
-	file, err := os.Open("data.json")
+	fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Device active, started running"))
+	devicesSync.Lock()
+	runningDevices[device.ID] = device
+	devicesSync.Unlock()
+
+	file, err := os.Open(device.Note)
 	if err != nil {
 		log.Println("Error opening json file:", err)
 	}
