@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/logger"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -97,10 +98,29 @@ func main() {
 func (p *program) Start(service.Service) error {
 	fmt.Println(color.Ize(color.Green, "INF [MAIN] "+serviceName+" ["+version+"] started"))
 	go p.run()
+	serviceSync.Lock()
+	serviceIsRunning = true
+	serviceSync.Unlock()
 	return nil
 }
 
 func (p *program) Stop(service.Service) error {
+	serviceSync.Lock()
+	serviceIsRunning = false
+	serviceSync.Unlock()
+	devicesSync.Lock()
+	noOfRunningDevices := runningDevices
+	activeDevices = make(map[uint]database.Device)
+	devicesSync.Unlock()
+
+	for len(noOfRunningDevices) != 0 {
+		fmt.Println(color.Ize(color.Green, "INF [MAIN] "+serviceName+" ["+version+"] stopping..."))
+		time.Sleep(1 * time.Second)
+		devicesSync.Lock()
+		noOfRunningDevices = runningDevices
+		devicesSync.Unlock()
+	}
+
 	fmt.Println(color.Ize(color.Green, "INF [MAIN] "+serviceName+" ["+version+"] stopped"))
 	return nil
 }
@@ -115,6 +135,13 @@ func (p *program) run() {
 	readLatestPortData(db)
 	readDeviceType(db)
 	for {
+		serviceSync.Lock()
+		serviceRunning := serviceIsRunning
+		serviceSync.Unlock()
+		if !serviceRunning {
+			break
+		}
+
 		programIsActive = checkActivation(db)
 		readActiveDevices(programIsActive, db)
 		fmt.Println(color.Ize(color.Green, "INF [MAIN] License activated: "+strconv.FormatBool(programIsActive)))
@@ -293,68 +320,131 @@ func runDevice(device database.Device, db *gorm.DB) {
 	runningDevices[device.ID] = device
 	devicesSync.Unlock()
 
-	file, err := os.Open(device.Note)
-	if err != nil {
-		log.Println("Error opening json file:", err)
-	}
-	defer file.Close()
+	for {
+		fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Device main loop started"))
+		timer := time.Now()
+		dialer := net.Dialer{Timeout: 5 * time.Second}
+		conn, err := dialer.Dial("tcp", device.IpAddress)
+		if err != nil {
+			serviceSync.Lock()
+			serviceNowRunning := serviceIsRunning
+			serviceSync.Unlock()
 
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Println("Error reading json data:", err)
-	}
+			devicesSync.Lock()
+			_, deviceIsActive := activeDevices[device.ID]
+			devicesSync.Unlock()
 
-	var jsonfile []Data
-	err = json.Unmarshal(data, &jsonfile)
-	if err != nil {
-		log.Println("Error unmarshalling json data:", err)
-	}
-	dataTime := time.Now()
-	for _, data := range jsonfile {
-		digitalPorts, analogPorts := downloadPortsForDevice(device, db)
-		if data.Type == "digital" {
-			for _, port := range digitalPorts {
-				dataTime, err = time.Parse("2006-1-2 15:4:5.000", data.Datetime)
-				if err != nil {
-					fmt.Println(color.Ize(color.Red, "ERR Problem parsing date time for digital data."+err.Error()))
-					continue
-				}
-				var digitalRecord database.DevicePortDigitalRecord
-				digitalRecord.DevicePortID = int(port.ID)
-				digitalRecord.DateTime = dataTime
-				digitalRecord.Data = int(data.Data)
-
-				db.Create(&digitalRecord)
-				devicesPortDigitalSync.Lock()
-				devicePortDigitalData[port.ID] = DevicePortDigitalData{
-					DateTime: dataTime,
-					Data:     int(data.Data),
-				}
-				devicesPortDigitalSync.Unlock()
+			if !serviceNowRunning {
+				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, service is ending"))
+				break
 			}
-		} else if data.Type == "analog" {
-			for _, port := range analogPorts {
-				maxPositionsInAnalogData := 10
-				dataTime, err = time.Parse("2006-1-2 15:4:5", data.Datetime)
-				if err != nil {
-					fmt.Println(color.Ize(color.Red, "ERR Problem parsing date time for analog data."+err.Error()))
-					continue
-				}
-				if port.PortNumber <= maxPositionsInAnalogData {
-					var analogRecord database.DevicePortAnalogRecord
-					analogRecord.DevicePortID = int(port.ID)
-					analogRecord.DateTime = dataTime
-					analogRecord.Data = data.Data
+			if !deviceIsActive {
+				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, device not active"))
+				break
+			}
+			sleep(device, timer)
+		}
 
-					db.Create(&analogRecord)
-					devicesPortAnalogSync.Lock()
-					devicePortAnalogData[port.ID] = DevicePortAnalogData{
-						DateTime: dataTime,
-						Data:     data.Data,
+		file, err := os.Open(device.Note)
+		if err != nil {
+			log.Println("Error opening json file:", err)
+		}
+		defer file.Close()
+
+		data, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Println("Error reading json data:", err)
+		}
+
+		var jsonfile []Data
+		err = json.Unmarshal(data, &jsonfile)
+		if err != nil {
+			log.Println("Error unmarshalling json data:", err)
+		}
+		dataTime := time.Now()
+		for _, data := range jsonfile {
+			digitalPorts, analogPorts := downloadPortsForDevice(device, db)
+			if data.Type == "digital" {
+				for _, port := range digitalPorts {
+					dataTime, err = time.Parse("2006-1-2 15:4:5.000", data.Datetime)
+					if err != nil {
+						fmt.Println(color.Ize(color.Red, "ERR Problem parsing date time for digital data."+err.Error()))
+						continue
 					}
-					devicesPortAnalogSync.Unlock()
+					var digitalRecord database.DevicePortDigitalRecord
+					digitalRecord.DevicePortID = int(port.ID)
+					digitalRecord.DateTime = dataTime
+					digitalRecord.Data = int(data.Data)
+
+					db.Create(&digitalRecord)
+					devicesPortDigitalSync.Lock()
+					devicePortDigitalData[port.ID] = DevicePortDigitalData{
+						DateTime: dataTime,
+						Data:     int(data.Data),
+					}
+					devicesPortDigitalSync.Unlock()
 				}
+			} else if data.Type == "analog" {
+				for _, port := range analogPorts {
+					maxPositionsInAnalogData := 10
+					dataTime, err = time.Parse("2006-1-2 15:4:5", data.Datetime)
+					if err != nil {
+						fmt.Println(color.Ize(color.Red, "ERR Problem parsing date time for analog data."+err.Error()))
+						continue
+					}
+					if port.PortNumber <= maxPositionsInAnalogData {
+						var analogRecord database.DevicePortAnalogRecord
+						analogRecord.DevicePortID = int(port.ID)
+						analogRecord.DateTime = dataTime
+						analogRecord.Data = data.Data
+
+						db.Create(&analogRecord)
+						devicesPortAnalogSync.Lock()
+						devicePortAnalogData[port.ID] = DevicePortAnalogData{
+							DateTime: dataTime,
+							Data:     data.Data,
+						}
+						devicesPortAnalogSync.Unlock()
+					}
+				}
+			}
+
+			serviceSync.Lock()
+			serviceNowRunning := serviceIsRunning
+			serviceSync.Unlock()
+			devicesSync.Lock()
+			_, deviceIsActive := activeDevices[device.ID]
+			devicesSync.Unlock()
+			if !serviceNowRunning {
+				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, service is ending"))
+				conn.Close()
+				break
+			}
+			if !deviceIsActive {
+				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, device not active"))
+				conn.Close()
+				break
 			}
 		}
+		devicesSync.Lock()
+		_, deviceIsActive := activeDevices[device.ID]
+		devicesSync.Unlock()
+		if !deviceIsActive {
+			break
+		}
+		sleep(device, timer)
+	}
+	devicesSync.Lock()
+	delete(runningDevices, device.ID)
+	devicesSync.Unlock()
+	fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Device not active, stopped running"))
+
+}
+
+func sleep(device database.Device, start time.Time) {
+	if time.Since(start) < (downloadInSeconds * time.Second) {
+		sleepTime := downloadInSeconds*time.Second - time.Since(start)
+		fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Sleeping for "+sleepTime.String()))
+		time.Sleep(sleepTime)
 	}
 }
