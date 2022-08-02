@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm/logger"
 	"io/ioutil"
 	"log"
-	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -323,27 +322,6 @@ func runDevice(device database.Device, db *gorm.DB) {
 	for {
 		fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Device main loop started"))
 		timer := time.Now()
-		dialer := net.Dialer{Timeout: 5 * time.Second}
-		conn, err := dialer.Dial("tcp", device.IpAddress)
-		if err != nil {
-			serviceSync.Lock()
-			serviceNowRunning := serviceIsRunning
-			serviceSync.Unlock()
-
-			devicesSync.Lock()
-			_, deviceIsActive := activeDevices[device.ID]
-			devicesSync.Unlock()
-
-			if !serviceNowRunning {
-				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, service is ending"))
-				break
-			}
-			if !deviceIsActive {
-				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, device not active"))
-				break
-			}
-			sleep(device, timer)
-		}
 
 		file, err := os.Open(device.Note)
 		if err != nil {
@@ -407,23 +385,6 @@ func runDevice(device database.Device, db *gorm.DB) {
 						devicesPortAnalogSync.Unlock()
 					}
 				}
-			}
-
-			serviceSync.Lock()
-			serviceNowRunning := serviceIsRunning
-			serviceSync.Unlock()
-			devicesSync.Lock()
-			_, deviceIsActive := activeDevices[device.ID]
-			devicesSync.Unlock()
-			if !serviceNowRunning {
-				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, service is ending"))
-				conn.Close()
-				break
-			}
-			if !deviceIsActive {
-				fmt.Println(color.Ize(color.Green, "INF ["+device.Name+"] Communication ended, device not active"))
-				conn.Close()
-				break
 			}
 		}
 		devicesSync.Lock()
